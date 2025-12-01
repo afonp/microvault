@@ -1,1 +1,4 @@
 /.github
+metadata.db
+bin/master
+bin/volume

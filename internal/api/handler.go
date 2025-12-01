@@ -60,15 +60,14 @@ func (h *Handler) PutBlob(w http.ResponseWriter, r *http.Request) {
 
 	// proxy to volume
 	// in phase 1, we always use h.volumeURL
-	targetURL := fmt.Sprintf("%s/%s", h.volumeURL, key)
+	// we PUT to the volume root, and it returns the hash
+	targetURL := h.volumeURL
 
 	req, err := http.NewRequest(http.MethodPut, targetURL, r.Body)
 	if err != nil {
 		http.Error(w, "failed to create request", http.StatusInternalServerError)
 		return
 	}
-	// copy headers? usually good practice but maybe overkill for "radically simple"
-	// let's just set content-length if known
 	req.ContentLength = r.ContentLength
 
 	resp, err := h.client.Do(req)
@@ -79,17 +78,29 @@ func (h *Handler) PutBlob(w http.ResponseWriter, r *http.Request) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 300 {
-		// forward error
 		w.WriteHeader(resp.StatusCode)
 		io.Copy(w, resp.Body)
 		return
 	}
 
+	// read hash from response body
+	hashBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		http.Error(w, "failed to read upstream response", http.StatusBadGateway)
+		return
+	}
+	hash := string(hashBytes)
+
 	// success, update db
-	if err := h.store.PutBlob(key, h.volumeURL); err != nil {
-		// consistency issue here if db fails but write succeeded.
-		// for "simple", we log and fail? or just fail.
-		// user can retry.
+	// store the full URL to the blob: volumeURL + "/" + sharded_path
+	// Volume stores as /ab/cd/hash
+	if len(hash) < 4 {
+		http.Error(w, "invalid hash received", http.StatusBadGateway)
+		return
+	}
+	blobURL := fmt.Sprintf("%s/%s/%s/%s", h.volumeURL, hash[:2], hash[2:4], hash)
+
+	if err := h.store.PutBlob(key, blobURL); err != nil {
 		http.Error(w, "failed to update index", http.StatusInternalServerError)
 		return
 	}
@@ -116,7 +127,7 @@ func (h *Handler) DeleteBlob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// delete from volume
-	targetURL := fmt.Sprintf("%s/%s", volumeID, key)
+	targetURL := volumeID
 	req, err := http.NewRequest(http.MethodDelete, targetURL, nil)
 	if err != nil {
 		http.Error(w, "failed to create request", http.StatusInternalServerError)
