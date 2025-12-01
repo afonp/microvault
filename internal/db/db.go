@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"strings"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -40,20 +41,27 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-// put_blob records a blob's location
-func (s *Store) PutBlob(key, volumeID string) error {
-	_, err := s.db.Exec("INSERT OR REPLACE INTO blobs (key, volume_id) VALUES (?, ?)", key, volumeID)
+// put_blob records a blob's location(s)
+func (s *Store) PutBlob(key string, volumeIDs []string) error {
+	val := strings.Join(volumeIDs, ",")
+	_, err := s.db.Exec("INSERT OR REPLACE INTO blobs (key, volume_id) VALUES (?, ?)", key, val)
 	return err
 }
 
-// get_blob retrieves a blob's location
-func (s *Store) GetBlob(key string) (string, error) {
-	var volumeID string
-	err := s.db.QueryRow("SELECT volume_id FROM blobs WHERE key = ?", key).Scan(&volumeID)
+// get_blob retrieves a blob's location(s)
+func (s *Store) GetBlob(key string) ([]string, error) {
+	var val string
+	err := s.db.QueryRow("SELECT volume_id FROM blobs WHERE key = ?", key).Scan(&val)
 	if err == sql.ErrNoRows {
-		return "", nil
+		return nil, nil
 	}
-	return volumeID, err
+	if err != nil {
+		return nil, err
+	}
+	if val == "" {
+		return nil, nil
+	}
+	return strings.Split(val, ","), nil
 }
 
 // delete_blob removes a blob's metadata

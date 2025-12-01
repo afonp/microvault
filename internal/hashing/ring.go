@@ -38,11 +38,19 @@ func (r *Ring) AddNode(node string) {
 }
 
 func (r *Ring) GetNode(key string) string {
+	nodes := r.GetNodes(key, 1)
+	if len(nodes) == 0 {
+		return ""
+	}
+	return nodes[0]
+}
+
+func (r *Ring) GetNodes(key string, n int) []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	if len(r.nodes) == 0 {
-		return ""
+		return nil
 	}
 
 	hash := r.hash(key)
@@ -54,7 +62,23 @@ func (r *Ring) GetNode(key string) string {
 		idx = 0
 	}
 
-	return r.vNodes[r.sorted[idx]]
+	distinctNodes := make(map[string]bool)
+	var result []string
+
+	// walk the ring
+	for len(result) < n && len(distinctNodes) < len(r.nodes) {
+		node := r.vNodes[r.sorted[idx]]
+		if !distinctNodes[node] {
+			distinctNodes[node] = true
+			result = append(result, node)
+		}
+		idx++
+		if idx >= len(r.sorted) {
+			idx = 0
+		}
+	}
+
+	return result
 }
 
 func (r *Ring) hash(key string) uint32 {
