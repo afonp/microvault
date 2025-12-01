@@ -2,3 +2,6 @@
 metadata.db
 bin/master
 bin/volume
+data1/
+data2/
+data3/

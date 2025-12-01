@@ -5,14 +5,17 @@ import (
 	"log"
 	"net/http"
 
+	"strings"
+
 	"github.com/afonp/microvault/internal/api"
 	"github.com/afonp/microvault/internal/db"
+	"github.com/afonp/microvault/internal/hashing"
 )
 
 func main() {
 	port := flag.String("port", "8080", "port to listen on")
 	dbPath := flag.String("db", "metadata.db", "path to metadata database")
-	volumeURL := flag.String("volume", "http://localhost:8081", "url of the volume server")
+	volumes := flag.String("volumes", "http://localhost:8081", "comma-separated list of volume servers")
 	flag.Parse()
 
 	store, err := db.NewStore(*dbPath)
@@ -21,11 +24,16 @@ func main() {
 	}
 	defer store.Close()
 
-	handler := api.NewHandler(store, *volumeURL)
+	ring := hashing.NewRing(3) // 3 replicas
+	for _, v := range strings.Split(*volumes, ",") {
+		ring.AddNode(strings.TrimSpace(v))
+	}
+
+	handler := api.NewHandler(store, ring)
 
 	http.HandleFunc("/blob/", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
-		case http.MethodGet:
+		case http.MethodGet, http.MethodHead:
 			handler.ServeBlob(w, r)
 		case http.MethodPut:
 			handler.PutBlob(w, r)

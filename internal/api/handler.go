@@ -7,19 +7,20 @@ import (
 	"strings"
 
 	"github.com/afonp/microvault/internal/db"
+	"github.com/afonp/microvault/internal/hashing"
 )
 
 type Handler struct {
-	store     *db.Store
-	volumeURL string // single volume for phase 1
-	client    *http.Client
+	store  *db.Store
+	ring   *hashing.Ring
+	client *http.Client
 }
 
-func NewHandler(store *db.Store, volumeURL string) *Handler {
+func NewHandler(store *db.Store, ring *hashing.Ring) *Handler {
 	return &Handler{
-		store:     store,
-		volumeURL: volumeURL,
-		client:    &http.Client{},
+		store:  store,
+		ring:   ring,
+		client: &http.Client{},
 	}
 }
 
@@ -43,9 +44,6 @@ func (h *Handler) ServeBlob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// redirect to volume
-	// volumeID in phase 1 is just the url, or we map it.
-	// let's assume volumeID stored in db is the base url for now, or we match it.
-	// for simplicity in phase 1, we just use the stored value which we will save as the url.
 	http.Redirect(w, r, fmt.Sprintf("%s/%s", volumeID, key), http.StatusFound)
 }
 
@@ -59,9 +57,15 @@ func (h *Handler) PutBlob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// proxy to volume
-	// in phase 1, we always use h.volumeURL
+	// use consistent hashing to pick volume
+	targetVolume := h.ring.GetNode(key)
+	if targetVolume == "" {
+		http.Error(w, "no volumes available", http.StatusServiceUnavailable)
+		return
+	}
+
 	// we PUT to the volume root, and it returns the hash
-	targetURL := h.volumeURL
+	targetURL := targetVolume
 
 	req, err := http.NewRequest(http.MethodPut, targetURL, r.Body)
 	if err != nil {
@@ -93,12 +97,12 @@ func (h *Handler) PutBlob(w http.ResponseWriter, r *http.Request) {
 
 	// success, update db
 	// store the full URL to the blob: volumeURL + "/" + sharded_path
-	// Volume stores as /ab/cd/hash
+	// volume stores as /ab/cd/hash
 	if len(hash) < 4 {
 		http.Error(w, "invalid hash received", http.StatusBadGateway)
 		return
 	}
-	blobURL := fmt.Sprintf("%s/%s/%s/%s", h.volumeURL, hash[:2], hash[2:4], hash)
+	blobURL := fmt.Sprintf("%s/%s/%s/%s", targetVolume, hash[:2], hash[2:4], hash)
 
 	if err := h.store.PutBlob(key, blobURL); err != nil {
 		http.Error(w, "failed to update index", http.StatusInternalServerError)

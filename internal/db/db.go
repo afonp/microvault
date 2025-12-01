@@ -21,7 +21,7 @@ func NewStore(path string) (*Store, error) {
 	// create blobs table if it doesn't exist
 	// key: the blob key (user provided or hash)
 	// volume_id: the identifier of the volume where the blob is stored
-	// for phase 1 we might just store the full url or a simple id
+	// for now we might just store the full url or a simple id
 	query := `
 	CREATE TABLE IF NOT EXISTS blobs (
 		key TEXT PRIMARY KEY,
