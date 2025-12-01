@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -23,14 +24,17 @@ func main() {
 	}
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		// path should be /blob/{key} or just /{key} depending on how nginx routes it
-		// let's assume nginx passes the full path /blob/{key} or rewrites it.
-		// for this simple wrapper, let's assume we get /{key} or /blob/{key} and we just want the key.
-		// actually, the master redirects to {volumeURL}/{key}.
-		// so if volumeURL is http://localhost:8081, request is GET /key (served by nginx)
-		// PUT /key (handled here).
+		// path may come in as /blob/{key} or /{key}, depending on nginx.
+		// we only need the key, so strip any prefix.
+		// the master redirects clients to {volume_url}/{key}, so requests here are
+		// simple GET /key or PUT /key.
 
 		key := strings.TrimPrefix(r.URL.Path, "/")
+
+		if r.URL.Path == "/_list" && r.Method == http.MethodGet {
+			handle_list(w, *rootDir)
+			return
+		}
 
 		switch r.Method {
 		case http.MethodPut:
@@ -41,6 +45,8 @@ func main() {
 				return
 			}
 			handle_delete(w, r, *rootDir, key)
+		case http.MethodHead:
+			handle_head(w, r, *rootDir, key)
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
@@ -166,4 +172,45 @@ func handle_delete(w http.ResponseWriter, r *http.Request, root, key string) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func handle_list(w http.ResponseWriter, root string) {
+	var blobs []string
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			// check if it looks like a hash (64 chars)
+			if len(info.Name()) == 64 {
+				blobs = append(blobs, info.Name())
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		http.Error(w, "failed to walk dir", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(blobs)
+}
+
+func handle_head(w http.ResponseWriter, r *http.Request, root, key string) {
+	hash := filepath.Base(key)
+	if len(hash) != 64 {
+		http.Error(w, "invalid hash", http.StatusBadRequest)
+		return
+	}
+	path := filepath.Join(root, hash[:2], hash[2:4], hash)
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }

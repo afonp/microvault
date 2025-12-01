@@ -64,6 +64,25 @@ func (s *Store) GetBlob(key string) ([]string, error) {
 	return strings.Split(val, ","), nil
 }
 
+// list_keys returns all keys in the store
+func (s *Store) ListKeys() ([]string, error) {
+	rows, err := s.db.Query("SELECT key FROM blobs")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var keys []string
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, err
+		}
+		keys = append(keys, key)
+	}
+	return keys, nil
+}
+
 // delete_blob removes a blob's metadata
 func (s *Store) DeleteBlob(key string) error {
 	_, err := s.db.Exec("DELETE FROM blobs WHERE key = ?", key)
